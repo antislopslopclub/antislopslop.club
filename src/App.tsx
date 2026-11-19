@@ -75,7 +75,7 @@ export function App() {
       for (let index = 0; index < cells.length; index++) {
         const cell = cells[index] ??= {
           emojiIndex: Math.floor(Math.random() * emojis.length),
-          nextChange: now + randomDelay(),
+          nextChange: now + Math.random() * randomDelay(),
           offsetX: 0,
           offsetY: 0,
         };
