@@ -1,12 +1,18 @@
 import { serve } from "bun";
+import { join } from "node:path";
 import index from "./index.html";
+
+const publicDir = join(import.meta.dir, "../public");
+const publicFiles = new Bun.Glob("**/*").scanSync({ cwd: publicDir, onlyFiles: true });
+const assets = Object.fromEntries(Array.from(publicFiles, name => [
+  `/${name}`, new Response(Bun.file(join(publicDir, name))),
+]));
 
 const server = serve({
   routes: {
     // Serve index.html for all unmatched routes.
     "/*": index,
-    "/favicon.ico": new Response(null, { status: 404 }),
-    "/apple-touch-icon.png": new Response(null, { status: 404 }),
+    ...assets,
     "/apple-touch-icon-precomposed.png": new Response(null, { status: 404 }),
 
     "/api/hello": {
