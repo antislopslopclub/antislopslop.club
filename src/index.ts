@@ -5,6 +5,9 @@ const server = serve({
   routes: {
     // Serve index.html for all unmatched routes.
     "/*": index,
+    "/favicon.ico": new Response(null, { status: 404 }),
+    "/apple-touch-icon.png": new Response(null, { status: 404 }),
+    "/apple-touch-icon-precomposed.png": new Response(null, { status: 404 }),
 
     "/api/hello": {
       GET() {

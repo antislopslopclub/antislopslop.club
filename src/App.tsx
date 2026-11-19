@@ -1,12 +1,7 @@
 import { useEffect, useRef } from "react";
-import { createRound, roundFrame, type Round } from "./minesweeper";
+import { createRound, findSpace, roundFrame, type Round } from "./minesweeper";
+import { emojis } from "./emojis";
 import "./index.css";
-
-const emojis = [
-  "🚀", "✨", "🔥", "🎯", "🤖", "⚡", "📦", "🧠",
-  "🎉", "🛠️", "💡", "🐛", "🔍", "⚙️", "📚", "✅",
-  "🌟", "🧪", "🎨", "🚧", "🔮", "📈", "💎", "💻",
-];
 
 const cellSize = 24;
 const attractionRadius = 140;
@@ -34,14 +29,15 @@ export function App() {
 
     let lastFrame = performance.now();
     let pointer: { x: number; y: number } | null = null;
-    let game: { round: Round; start: number } | null = null;
-    let playback: ReturnType<typeof roundFrame> = null;
+    let games: { round: Round; start: number }[] = [];
+    const overlays = new Map<number, string>();
+    const dirty = new Set<number>();
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     const paintCell = (column: number, row: number, cell: Cell) => {
       const x = (column + 0.5) * cellWidth + cell.offsetX;
       const y = (row + 0.5) * cellHeight + cell.offsetY;
-      context.fillText(playback?.glyphAt(column, row) ?? emojis[cell.emojiIndex]!, x, y);
+      context.fillText(overlays.get(row * columns + column) ?? emojis[cell.emojiIndex]!, x, y);
     };
 
     const resize = () => {
@@ -63,15 +59,19 @@ export function App() {
       cellHeight = height / rows;
       cells.length = rows * columns;
       const now = performance.now();
-      if (game) {
-        const round = game.round;
-        if (round.columns > columns || round.rows > rows) game = null;
-        else {
-          round.left = Math.min(round.left, columns - round.columns);
-          round.top = Math.min(round.top, rows - round.rows);
+      overlays.clear();
+      // Keep boards that still fit in place before relocating any clipped boards.
+      const retained = games.filter(({ round }) =>
+        round.left + round.columns <= columns && round.top + round.rows <= rows);
+      for (const game of games) {
+        if (retained.includes(game)) continue;
+        const position = findSpace(columns, rows, game.round, retained.map(g => g.round));
+        if (position) {
+          Object.assign(game.round, position);
+          retained.push(game);
         }
-        playback = game ? roundFrame(round, now - game.start, reducedMotion.matches) : null;
       }
+      games = retained;
       for (let index = 0; index < cells.length; index++) {
         const cell = cells[index] ??= {
           emojiIndex: Math.floor(Math.random() * emojis.length),
@@ -83,20 +83,41 @@ export function App() {
       }
     };
 
+    const invalidate = (left: number, top: number, right: number, bottom: number) => {
+      left = Math.max(0, left);
+      top = Math.max(0, top);
+      right = Math.min(columns - 1, right);
+      bottom = Math.min(rows - 1, bottom);
+      context.clearRect(left * cellWidth, top * cellHeight,
+        (right - left + 1) * cellWidth, (bottom - top + 1) * cellHeight);
+      for (let row = top; row <= bottom; row++) {
+        for (let column = left; column <= right; column++) dirty.add(row * columns + column);
+      }
+    };
+
     const animate = (now: number) => {
       const blend = 1 - Math.exp(-Math.max(0, now - lastFrame) / 95);
       lastFrame = now;
       const target = reducedMotion.matches ? null : pointer;
       let left = columns, right = -1, top = rows, bottom = -1;
-      if (game) {
-        const { round, start } = game;
-        left = round.left;
-        right = left + round.columns - 1;
-        top = round.top;
-        bottom = top + round.rows - 1;
-        playback = roundFrame(round, now - start, reducedMotion.matches);
-        if (!playback) game = null;
-      }
+      const hands: { column: number; row: number }[] = [];
+      overlays.clear();
+      games = games.filter(({ round, start }) => {
+        const lastColumn = round.left + round.columns - 1;
+        const lastRow = round.top + round.rows - 1;
+        // Clear the hand and ending glyphs even on the last frame of a round.
+        invalidate(round.left - 1, round.top - 1, lastColumn + 1, lastRow + 1);
+        const playback = roundFrame(round, now - start, reducedMotion.matches);
+        if (!playback) return false;
+        for (let row = round.top; row <= lastRow; row++) {
+          for (let column = round.left; column <= lastColumn; column++) {
+            const glyph = playback.glyphAt(column, row);
+            if (glyph) overlays.set(row * columns + column, glyph);
+          }
+        }
+        if (playback.hand) hands.push(playback.hand);
+        return true;
+      });
 
       cells.forEach((cell, index) => {
         const changed = now >= cell.nextChange;
@@ -124,27 +145,17 @@ export function App() {
           top = Math.min(top, row);
           bottom = Math.max(bottom, row);
         } else if (changed) {
-          context.clearRect(column * cellWidth, row * cellHeight, cellWidth, cellHeight);
-          paintCell(column, row, cell);
+          invalidate(column, row, column, row);
         }
       });
 
       // Include one neighboring cell on each side to clear overhanging glyphs.
-      if (right >= left) {
-        left = Math.max(0, left - 1);
-        right = Math.min(columns - 1, right + 1);
-        top = Math.max(0, top - 1);
-        bottom = Math.min(rows - 1, bottom + 1);
-        context.clearRect(left * cellWidth, top * cellHeight,
-          (right - left + 1) * cellWidth, (bottom - top + 1) * cellHeight);
-        for (let row = top; row <= bottom; row++) {
-          for (let column = left; column <= right; column++) {
-            paintCell(column, row, cells[row * columns + column]!);
-          }
-        }
+      if (right >= left) invalidate(left - 1, top - 1, right + 1, bottom + 1);
+      for (const index of dirty) {
+        paintCell(index % columns, Math.floor(index / columns), cells[index]!);
       }
-      if (playback?.hand) {
-        const { column, row } = playback.hand;
+      dirty.clear();
+      for (const { column, row } of hands) {
         const cell = cells[Math.round(row) * columns + Math.round(column)]!;
         context.fillText("👆", (column + 0.76) * cellWidth + cell.offsetX,
           (row + 0.89) * cellHeight + cell.offsetY);
@@ -164,10 +175,10 @@ export function App() {
     const listeners = new AbortController();
     const options = { signal: listeners.signal };
     const startRound = (anchorX: number, anchorY: number) => {
-      if (game) return;
       const column = Math.max(0, Math.min(columns - 1, Math.floor(anchorX * columns)));
       const row = Math.max(0, Math.min(rows - 1, Math.floor(anchorY * rows)));
-      game = { round: createRound(columns, rows, column, row), start: performance.now() };
+      const round = createRound(columns, rows, column, row, games.map(game => game.round));
+      if (round) games.push({ round, start: performance.now() });
     };
     canvas.addEventListener("click", event => {
       const bounds = canvas.getBoundingClientRect();

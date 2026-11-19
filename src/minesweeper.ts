@@ -20,12 +20,48 @@ function neighborsOf(index: number, columns: number, rows: number) {
   return result;
 }
 
-export function createRound(gridColumns: number, gridRows: number, clickedColumn: number, clickedRow: number) {
+type Bounds = { left: number; top: number; columns: number; rows: number };
+
+export function findSpace(gridColumns: number, gridRows: number, board: Bounds, occupied: Bounds[]) {
+  const maxLeft = gridColumns - board.columns;
+  const maxTop = gridRows - board.rows;
+  if (maxLeft < 0 || maxTop < 0) return null;
+  const preferredLeft = Math.max(0, Math.min(maxLeft, board.left));
+  const preferredTop = Math.max(0, Math.min(maxTop, board.top));
+  // Leave a cell between boards for the moving hands and displaced glyphs.
+  const fits = (left: number, top: number) => occupied.every(other =>
+    left > other.left + other.columns || left + board.columns < other.left ||
+    top > other.top + other.rows || top + board.rows < other.top);
+  if (fits(preferredLeft, preferredTop)) return { left: preferredLeft, top: preferredTop };
+
+  let best: { left: number; top: number } | null = null;
+  let bestDistance = Infinity;
+  for (let top = 0; top <= maxTop; top++) {
+    for (let left = 0; left <= maxLeft; left++) {
+      const distance = (left - preferredLeft) ** 2 + (top - preferredTop) ** 2;
+      if (distance < bestDistance && fits(left, top)) {
+        best = { left, top };
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
+export function createRound(
+  gridColumns: number, gridRows: number, clickedColumn: number, clickedRow: number,
+  occupied: Bounds[] = [],
+) {
   const columns = Math.min(9, gridColumns);
   const rows = Math.min(7, gridRows);
-  const left = Math.max(0, Math.min(gridColumns - columns, clickedColumn - Math.floor(columns / 2)));
-  const top = Math.max(0, Math.min(gridRows - rows, clickedRow - Math.floor(rows / 2)));
-  const first = (clickedRow - top) * columns + clickedColumn - left;
+  const origin = findSpace(gridColumns, gridRows, {
+    left: clickedColumn - Math.floor(columns / 2), top: clickedRow - Math.floor(rows / 2), columns, rows,
+  }, occupied);
+  if (!origin) return null;
+  const { left, top } = origin;
+  const firstColumn = Math.max(0, Math.min(columns - 1, clickedColumn - left));
+  const firstRow = Math.max(0, Math.min(rows - 1, clickedRow - top));
+  const first = firstRow * columns + firstColumn;
   const squares = Array.from({ length: columns * rows }, (_, index) => ({
     index, neighbors: neighborsOf(index, columns, rows), mine: false, clue: 0,
     openedOn: Infinity, flaggedOn: Infinity,
@@ -87,7 +123,7 @@ export function createRound(gridColumns: number, gridRows: number, clickedColumn
   return { squares, moves, won, columns, rows, left, top };
 }
 
-export type Round = ReturnType<typeof createRound>;
+export type Round = NonNullable<ReturnType<typeof createRound>>;
 
 export function roundFrame(round: Round, elapsed: number, reducedMotion: boolean) {
   const time = Math.max(0, elapsed) / turnMs;
