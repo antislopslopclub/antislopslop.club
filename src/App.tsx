@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
 import { createRound, findSpace, roundFrame, type Round } from "./minesweeper";
+import { createFinale, type Icon } from "./finale";
 import { emojis } from "./emojis";
 import "./index.css";
 
 const cellSize = 24;
 const attractionRadius = 140;
+const winkIndex = emojis.length;
 
 type Cell = { emojiIndex: number; nextChange: number; offsetX: number; offsetY: number };
 
@@ -14,6 +16,8 @@ function randomDelay() {
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const messageRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -25,7 +29,11 @@ export function App() {
     let rows = 1;
     let cellWidth = cellSize;
     let cellHeight = cellSize;
+    let grid = { columns, rows, cellWidth, cellHeight };
     let frame: number;
+    let clicks = 0;
+    let finale: ReturnType<typeof createFinale> | null = null;
+    let visibleHands: Icon[] = [];
 
     let lastFrame = performance.now();
     let pointer: { x: number; y: number } | null = null;
@@ -34,10 +42,12 @@ export function App() {
     const dirty = new Set<number>();
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+    const glyphAt = (index: number) => overlays.get(index) ?? emojis[cells[index]!.emojiIndex] ?? "😉";
+
     const paintCell = (column: number, row: number, cell: Cell) => {
       const x = (column + 0.5) * cellWidth + cell.offsetX;
       const y = (row + 0.5) * cellHeight + cell.offsetY;
-      context.fillText(overlays.get(row * columns + column) ?? emojis[cell.emojiIndex]!, x, y);
+      context.fillText(glyphAt(row * columns + column), x, y);
     };
 
     const resize = () => {
@@ -57,7 +67,9 @@ export function App() {
       rows = Math.max(1, Math.floor(height / cellSize));
       cellWidth = width / columns;
       cellHeight = height / rows;
+      grid = { columns, rows, cellWidth, cellHeight };
       cells.length = rows * columns;
+      visibleHands = [];
       const now = performance.now();
       overlays.clear();
       // Keep boards that still fit in place before relocating any clipped boards.
@@ -79,7 +91,7 @@ export function App() {
           offsetX: 0,
           offsetY: 0,
         };
-        paintCell(index % columns, Math.floor(index / columns), cell);
+        if (!finale) paintCell(index % columns, Math.floor(index / columns), cell);
       }
     };
 
@@ -98,6 +110,24 @@ export function App() {
     const animate = (now: number) => {
       const blend = 1 - Math.exp(-Math.max(0, now - lastFrame) / 95);
       lastFrame = now;
+      if (finale) {
+        const phase = finale(grid, now, reducedMotion.matches, (index, wink, changesAt) => {
+          const cell = cells[index]!;
+          cell.emojiIndex = wink ? winkIndex : Math.floor(Math.random() * emojis.length);
+          cell.nextChange = wink ? changesAt : now + randomDelay();
+          const column = index % columns;
+          const row = Math.floor(index / columns);
+          context.clearRect(column * cellWidth, row * cellHeight, cellWidth, cellHeight);
+          paintCell(column, row, cell);
+        });
+        messageRef.current!.hidden = phase !== "message";
+        if (phase === "done") {
+          finale = null;
+          clicks = 0;
+        }
+        frame = requestAnimationFrame(animate);
+        return;
+      }
       const target = reducedMotion.matches ? null : pointer;
       let left = columns, right = -1, top = rows, bottom = -1;
       const hands: { column: number; row: number }[] = [];
@@ -155,16 +185,19 @@ export function App() {
         paintCell(index % columns, Math.floor(index / columns), cells[index]!);
       }
       dirty.clear();
+      visibleHands = [];
       for (const { column, row } of hands) {
         const cell = cells[Math.round(row) * columns + Math.round(column)]!;
-        context.fillText("👆", (column + 0.76) * cellWidth + cell.offsetX,
-          (row + 0.89) * cellHeight + cell.offsetY);
+        const x = (column + 0.76) * cellWidth + cell.offsetX;
+        const y = (row + 0.89) * cellHeight + cell.offsetY;
+        visibleHands.push({ glyph: "👆", x, y });
+        context.fillText("👆", x, y);
       }
       frame = requestAnimationFrame(animate);
     };
 
     const follow = (event: PointerEvent) => {
-      if (!event.isPrimary) return;
+      if (!event.isPrimary || finale) return;
       const bounds = canvas.getBoundingClientRect();
       pointer = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
     };
@@ -174,7 +207,25 @@ export function App() {
     };
     const listeners = new AbortController();
     const options = { signal: listeners.signal };
-    const startRound = (anchorX: number, anchorY: number) => {
+    const activate = (anchorX: number, anchorY: number) => {
+      if (finale || !cells.length) return;
+      if (++clicks === 7) {
+        const icons = cells.map((cell, index) => ({
+          glyph: glyphAt(index),
+          x: (index % columns + 0.5) * cellWidth + cell.offsetX,
+          y: (Math.floor(index / columns) + 0.5) * cellHeight + cell.offsetY,
+        }));
+        finale = createFinale(context, icons.concat(visibleHands), grid, anchorX, performance.now());
+        games = [];
+        visibleHands = [];
+        overlays.clear();
+        pointer = null;
+        for (const cell of cells) {
+          cell.offsetX = 0;
+          cell.offsetY = 0;
+        }
+        return;
+      }
       const column = Math.max(0, Math.min(columns - 1, Math.floor(anchorX * columns)));
       const row = Math.max(0, Math.min(rows - 1, Math.floor(anchorY * rows)));
       const round = createRound(columns, rows, column, row, games.map(game => game.round));
@@ -182,12 +233,12 @@ export function App() {
     };
     canvas.addEventListener("click", event => {
       const bounds = canvas.getBoundingClientRect();
-      startRound((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+      activate((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
     }, options);
     canvas.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        if (!event.repeat) startRound(0.5, 0.5);
+        if (!event.repeat) activate(0.5, 0.5);
       }
     }, options);
     canvas.addEventListener("pointermove", follow, options);
@@ -212,7 +263,8 @@ export function App() {
 
   return (
     <main>
-      <canvas ref={canvasRef} role="button" tabIndex={0} aria-label="Play an emoji Minesweeper round" />
+      <canvas ref={canvasRef} role="button" tabIndex={0} aria-label="click for minesweeper" />
+      <span ref={messageRef} className="finale-message" role="status" hidden>See you soon!</span>
     </main>
   );
 }
