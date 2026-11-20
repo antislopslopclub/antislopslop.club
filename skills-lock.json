@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "skills": {
+    "codehygiene": {
+      "source": "brianbell-x/codehygiene",
+      "commit": "d56e737afef4f2362c45794e073599de86492a9b",
+      "sourceType": "github",
+      "skillPath": "codehygiene/SKILL.md",
+      "computedHash": "0becc882d81aaa2a08c74a454f6a065af93dafd5ce66b0f67cd3f8adebfca1fa"
+    }
+  }
+}

@@ -18,12 +18,12 @@ To run for production:
 bun start
 ```
 
-To type check:
+To run the CI checks locally with Bun canary:
 
 ```bash
 bun check
+bun lint
+bun fmt --check
 ```
-
-Run `bun lint` to find problems in the code and `bun fmt` to format it.
 
 This project was created using `bun init` in bun v1.4.4. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

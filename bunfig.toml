@@ -2,8 +2,18 @@
 env = "BUN_PUBLIC_*"
 
 [lint]
+ignorePatterns = [
+  "/.agents/skills/codehygiene/",
+  "/.claude/skills/codehygiene/",
+]
 # typeAware = true   # also run the rules that need types
 
 [lint.rules]
 # "no-console" = "warn"
 # "eqeqeq" = ["error", "smart"]
+
+[fmt]
+ignorePatterns = [
+  "/.agents/skills/codehygiene/",
+  "/.claude/skills/codehygiene/",
+]

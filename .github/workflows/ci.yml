@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bun:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+      - run: bun install --frozen-lockfile
+      - run: bun check
+      - run: bun lint
+      - run: bun fmt --check
+
+  readability:
+    needs: bun
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install CodeHygiene
+        run: pipx install git+https://github.com/brianbell-x/codehygiene.git@d56e737afef4f2362c45794e073599de86492a9b
+      - name: Report readability
+        if: github.event_name != 'pull_request'
+        run: codehygiene --no-update-check --no-color src/ scripts/
+      - name: Annotate changed PR lines
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          codehygiene --no-update-check --json src/ scripts/ | python3 .github/scripts/annotate_readability.py "$BASE_SHA"
+
+  deploy:
+    needs: readability
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

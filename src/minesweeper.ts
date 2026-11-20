@@ -301,15 +301,15 @@ export function roundFrame(
   const row = (i: number) => Math.floor(i / round.columns);
   const progress = reducedMotion ? 1 : Math.min(1, (time - turn) / tapPhase);
   const eased = progress * progress * (3 - 2 * progress);
-  const hand =
-    ending < 0
-      ? {
-          column:
-            round.left + col(previous) + (col(target) - col(previous)) * eased,
-          row:
-            round.top + row(previous) + (row(target) - row(previous)) * eased,
-        }
-      : null;
+  let hand = null;
+  if (ending < 0) {
+    const fromColumn = col(previous);
+    const fromRow = row(previous);
+    hand = {
+      column: round.left + fromColumn + (col(target) - fromColumn) * eased,
+      row: round.top + fromRow + (row(target) - fromRow) * eased,
+    };
+  }
 
   function glyphAt(column: number, gridRow: number) {
     const x = column - round.left;

@@ -198,8 +198,23 @@ function Scene({ theme }: { theme: Theme }) {
       }
     };
 
+    const overlayRound = (
+      round: Round,
+      glyphAt: (column: number, row: number) => string | undefined,
+    ) => {
+      for (let row = round.top; row < round.top + round.rows; row++) {
+        for (
+          let column = round.left;
+          column < round.left + round.columns;
+          column++
+        ) {
+          const glyph = glyphAt(column, row);
+          if (glyph) overlays.set(row * grid.columns + column, glyph);
+        }
+      }
+    };
+
     const updateRounds = (now: number) => {
-      const { columns } = grid;
       hands.length = 0;
       overlays.clear();
       let activeCount = 0;
@@ -214,16 +229,20 @@ function Scene({ theme }: { theme: Theme }) {
           reducedMotion.matches,
         );
         if (!playback) continue;
-        for (let row = round.top; row <= lastRow; row++) {
-          for (let column = round.left; column <= lastColumn; column++) {
-            const glyph = playback.glyphAt(column, row);
-            if (glyph) overlays.set(row * columns + column, glyph);
-          }
-        }
+        overlayRound(round, playback.glyphAt);
         if (playback.hand) hands.push(playback.hand);
         rounds[activeCount++] = round;
       }
       rounds.length = activeCount;
+    };
+
+    const advanceEmoji = (index: number, now: number) => {
+      if (now < cells.nextChange[index]!) return false;
+      const offset = 1 + Math.floor(Math.random() * (emojis.length - 1));
+      cells.emojiIndex[index] =
+        (cells.emojiIndex[index]! + offset) % emojis.length;
+      cells.nextChange[index] = now + randomDelay();
+      return true;
     };
 
     const updateCells = (now: number, blend: number) => {
@@ -234,13 +253,7 @@ function Scene({ theme }: { theme: Theme }) {
         top = rows,
         bottom = -1;
       for (let index = 0; index < cells.emojiIndex.length; index++) {
-        const changed = now >= cells.nextChange[index]!;
-        if (changed) {
-          const offset = 1 + Math.floor(Math.random() * (emojis.length - 1));
-          cells.emojiIndex[index] =
-            (cells.emojiIndex[index]! + offset) % emojis.length;
-          cells.nextChange[index] = now + randomDelay();
-        }
+        const changed = advanceEmoji(index, now);
         const displaced =
           cells.offsetX[index]! !== 0 || cells.offsetY[index]! !== 0;
         if (!target && !displaced && !changed) continue;
@@ -250,20 +263,23 @@ function Scene({ theme }: { theme: Theme }) {
         const dx = target ? target.x - (column + 0.5) * cellWidth : 0;
         const dy = target ? target.y - (row + 0.5) * cellHeight : 0;
         const distanceSquared = dx * dx + dy * dy;
-        if (displaced || (target && distanceSquared < attractionRadius ** 2)) {
-          const pull =
-            Math.max(0, 1 - Math.sqrt(distanceSquared) / attractionRadius) ** 2;
-          cells.offsetX[index]! += (dx * pull - cells.offsetX[index]!) * blend;
-          cells.offsetY[index]! += (dy * pull - cells.offsetY[index]!) * blend;
-          if (Math.abs(cells.offsetX[index]!) < 0.02) cells.offsetX[index] = 0;
-          if (Math.abs(cells.offsetY[index]!) < 0.02) cells.offsetY[index] = 0;
-          left = Math.min(left, column);
-          right = Math.max(right, column);
-          top = Math.min(top, row);
-          bottom = Math.max(bottom, row);
-        } else if (changed) {
-          invalidate(column, row, column, row);
+        if (
+          !displaced &&
+          (!target || distanceSquared >= attractionRadius ** 2)
+        ) {
+          if (changed) invalidate(column, row, column, row);
+          continue;
         }
+        const pull =
+          Math.max(0, 1 - Math.sqrt(distanceSquared) / attractionRadius) ** 2;
+        cells.offsetX[index]! += (dx * pull - cells.offsetX[index]!) * blend;
+        cells.offsetY[index]! += (dy * pull - cells.offsetY[index]!) * blend;
+        if (Math.abs(cells.offsetX[index]!) < 0.02) cells.offsetX[index] = 0;
+        if (Math.abs(cells.offsetY[index]!) < 0.02) cells.offsetY[index] = 0;
+        left = Math.min(left, column);
+        right = Math.max(right, column);
+        top = Math.min(top, row);
+        bottom = Math.max(bottom, row);
       }
 
       // Include one neighboring cell on each side to clear overhanging glyphs.
