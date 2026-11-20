@@ -3,10 +3,16 @@ import { join } from "node:path";
 import index from "./index.html";
 
 const publicDir = join(import.meta.dir, "../public");
-const publicFiles = new Bun.Glob("**/*").scanSync({ cwd: publicDir, onlyFiles: true });
-const assets = Object.fromEntries(Array.from(publicFiles, name => [
-  `/${name}`, new Response(Bun.file(join(publicDir, name))),
-]));
+const publicFiles = new Bun.Glob("**/*").scanSync({
+  cwd: publicDir,
+  onlyFiles: true,
+});
+const assets = Object.fromEntries(
+  Array.from(publicFiles, (name) => [
+    `/${name}`,
+    new Response(Bun.file(join(publicDir, name))),
+  ]),
+);
 
 const server = serve({
   routes: {

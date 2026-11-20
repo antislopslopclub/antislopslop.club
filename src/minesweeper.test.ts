@@ -1,8 +1,19 @@
 import { expect, test } from "bun:test";
-import { christmasTheme, spookyTheme } from "./emojis";
+import { christmasTheme, spookyTheme, standardTheme } from "./emojis";
 import { createRound, findSpace, roundFrame } from "./minesweeper";
 
 const firstBoard = { columns: 9, rows: 7, left: 0, top: 0 };
+
+test("Minesweeper reveals the opening square on the first frame", () => {
+  // Arrange
+  const round = createRound(9, 7, 4, 3)!;
+
+  // Act
+  const frame = roundFrame(round, 0, false)!;
+
+  // Assert
+  expect(frame.glyphAt(4, 3)).toBe(standardTheme.activity.clues[0]);
+});
 
 test("clicking an occupied cell spawns another round in the nearest free space", () => {
   // Arrange
@@ -48,7 +59,7 @@ for (const theme of [christmasTheme, spookyTheme]) {
   test(`the ${theme.slug} pointer moves diagonally across an open clearing`, () => {
     // Arrange
     const round = createRound(2, 2, 0, 0, [], theme.activity)!;
-    const halfwayToOppositeCorner = 460 + 460 * 0.74 / 2;
+    const halfwayToOppositeCorner = 460 + (460 * 0.74) / 2;
 
     // Act
     const hand = roundFrame(round, halfwayToOppositeCorner, false)!.hand!;
@@ -118,13 +129,18 @@ test("unrevealed cells keep their background throughout a delivery round", () =>
   const frame = roundFrame(round, afterLastDelivery, false)!;
 
   // Assert
-  const hidden = round.squares.openedOn.reduce<number[]>((indices, turn, index) => {
-    if (turn === Infinity) indices.push(index);
-    return indices;
-  }, []);
+  const hidden = round.squares.openedOn.reduce<number[]>(
+    (indices, turn, index) => {
+      if (turn === Infinity) indices.push(index);
+      return indices;
+    },
+    [],
+  );
   expect(hidden.length).toBeGreaterThan(0);
   for (const index of hidden) {
-    expect(frame.glyphAt(index % round.columns, Math.floor(index / round.columns))).toBeUndefined();
+    expect(
+      frame.glyphAt(index % round.columns, Math.floor(index / round.columns)),
+    ).toBeUndefined();
   }
 });
 
@@ -136,7 +152,9 @@ test("every delivery stop is in the clearing before Santa starts", () => {
   const round = createRound(grid.columns, grid.rows, 4, 3, [], "delivery")!;
 
   // Assert
-  expect(round.moves.every(home => round.squares.openedOn[home] === 0)).toBe(true);
+  expect(round.moves.every((home) => round.squares.openedOn[home] === 0)).toBe(
+    true,
+  );
 });
 
 for (const theme of [christmasTheme, spookyTheme]) {
@@ -148,10 +166,14 @@ for (const theme of [christmasTheme, spookyTheme]) {
     const times = [480, 550, 630, 720, 790];
 
     // Act
-    const positions = times.map(time => roundFrame(seasonal, time, false)!.hand);
+    const positions = times.map(
+      (time) => roundFrame(seasonal, time, false)!.hand,
+    );
 
     // Assert
-    expect(positions).toEqual(times.map(time => roundFrame(main, time, false)!.hand));
+    expect(positions).toEqual(
+      times.map((time) => roundFrame(main, time, false)!.hand),
+    );
   });
 }
 
@@ -162,9 +184,16 @@ test("simultaneous delivery rounds each draw their own theme", () => {
   const afterFirstStop = 400;
 
   // Act
-  const frames = [ghost, santa].map(round => roundFrame(round, afterFirstStop, false)!);
+  const frames = [ghost, santa].map((round) =>
+    roundFrame(round, afterFirstStop, false)!,
+  );
 
   // Assert
-  const street = frames.map(frame => [0, 1, 2].map(column => frame.glyphAt(column, 0)));
-  expect(street).toEqual([["🍬", "🕸️", "🎃"], ["🎁", "❄️", "🏠"]]);
+  const street = frames.map((frame) =>
+    [0, 1, 2].map((column) => frame.glyphAt(column, 0)),
+  );
+  expect(street).toEqual([
+    ["🍬", "🕸️", "🎃"],
+    ["🎁", "❄️", "🏠"],
+  ]);
 });

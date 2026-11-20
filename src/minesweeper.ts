@@ -13,7 +13,11 @@ function neighborsOf(index: number, columns: number, rows: number) {
   const y = Math.floor(index / columns);
   const result: number[] = [];
   for (let row = Math.max(0, y - 1); row <= Math.min(rows - 1, y + 1); row++) {
-    for (let col = Math.max(0, x - 1); col <= Math.min(columns - 1, x + 1); col++) {
+    for (
+      let col = Math.max(0, x - 1);
+      col <= Math.min(columns - 1, x + 1);
+      col++
+    ) {
       const neighbor = row * columns + col;
       if (neighbor !== index) result.push(neighbor);
     }
@@ -23,17 +27,28 @@ function neighborsOf(index: number, columns: number, rows: number) {
 
 type Bounds = { left: number; top: number; columns: number; rows: number };
 
-export function findSpace(gridColumns: number, gridRows: number, board: Bounds, occupied: Bounds[]) {
+export function findSpace(
+  gridColumns: number,
+  gridRows: number,
+  board: Bounds,
+  occupied: Bounds[],
+) {
   const maxLeft = gridColumns - board.columns;
   const maxTop = gridRows - board.rows;
   if (maxLeft < 0 || maxTop < 0) return null;
   const preferredLeft = Math.max(0, Math.min(maxLeft, board.left));
   const preferredTop = Math.max(0, Math.min(maxTop, board.top));
   // Leave a cell between boards for the moving hands and displaced glyphs.
-  const fits = (left: number, top: number) => occupied.every(other =>
-    left > other.left + other.columns || left + board.columns < other.left ||
-    top > other.top + other.rows || top + board.rows < other.top);
-  if (fits(preferredLeft, preferredTop)) return { left: preferredLeft, top: preferredTop };
+  const fits = (left: number, top: number) =>
+    occupied.every(
+      (other) =>
+        left > other.left + other.columns ||
+        left + board.columns < other.left ||
+        top > other.top + other.rows ||
+        top + board.rows < other.top,
+    );
+  if (fits(preferredLeft, preferredTop))
+    return { left: preferredLeft, top: preferredTop };
 
   let best: { left: number; top: number } | null = null;
   let bestDistance = Infinity;
@@ -60,8 +75,16 @@ function deliveryRoute(openedOn: Float64Array, columns: number, first: number) {
 
   function canGlide(from: number, to: number) {
     // Keep the entire rectangle between stops open, including room for the pointer glyph.
-    for (let y = Math.min(row(from), row(to)); y <= Math.max(row(from), row(to)); y++) {
-      for (let x = Math.min(col(from), col(to)); x <= Math.max(col(from), col(to)); x++) {
+    for (
+      let y = Math.min(row(from), row(to));
+      y <= Math.max(row(from), row(to));
+      y++
+    ) {
+      for (
+        let x = Math.min(col(from), col(to));
+        x <= Math.max(col(from), col(to));
+        x++
+      ) {
         if (openedOn[y * columns + x] !== 0) return false;
       }
     }
@@ -70,10 +93,19 @@ function deliveryRoute(openedOn: Float64Array, columns: number, first: number) {
 
   while (moves.length < 6) {
     const from = moves[moves.length - 1]!;
-    const reachable = clearing.filter(cell => !moves.includes(cell) && canGlide(from, cell));
-    const spaced = reachable.filter(cell => moves.every(home =>
-      Math.abs(col(cell) - col(home)) + Math.abs(row(cell) - row(home)) >= 2));
-    const candidates = !spaced.length && moves.length === 1 ? reachable : spaced;
+    const reachable = clearing.filter(
+      (cell) => !moves.includes(cell) && canGlide(from, cell),
+    );
+    const spaced = reachable.filter((cell) =>
+      moves.every(
+        (stop) =>
+          Math.abs(col(cell) - col(stop)) + Math.abs(row(cell) - row(stop)) >=
+          2,
+      ),
+    );
+    // For the first leg, accept a nearby stop if none are spaced apart.
+    const candidates =
+      moves.length === 1 && spaced.length === 0 ? reachable : spaced;
     if (!candidates.length) break;
     moves.push(pick(candidates));
   }
@@ -83,7 +115,9 @@ function deliveryRoute(openedOn: Float64Array, columns: number, first: number) {
 function createSquares(columns: number, rows: number) {
   const count = columns * rows;
   return {
-    neighbors: Array.from({ length: count }, (_, index) => neighborsOf(index, columns, rows)),
+    neighbors: Array.from({ length: count }, (_, index) =>
+      neighborsOf(index, columns, rows),
+    ),
     mine: new Uint8Array(count),
     clue: new Uint8Array(count),
     openedOn: new Float64Array(count).fill(Infinity),
@@ -91,7 +125,11 @@ function createSquares(columns: number, rows: number) {
   };
 }
 
-function reveal(squares: ReturnType<typeof createSquares>, target: number, turn: number) {
+function reveal(
+  squares: ReturnType<typeof createSquares>,
+  target: number,
+  turn: number,
+) {
   const pending = [target];
   while (pending.length) {
     const index = pending.pop()!;
@@ -101,33 +139,113 @@ function reveal(squares: ReturnType<typeof createSquares>, target: number, turn:
   }
 }
 
-export function createRound(
-  gridColumns: number, gridRows: number, clickedColumn: number, clickedRow: number,
-  occupied: Bounds[] = [], activity: BoardSkin | BoardSkin["kind"] = "minesweeper",
+function playMinesweeper(
+  squares: ReturnType<typeof createSquares>,
+  indices: number[],
+  first: number,
 ) {
-  const skin = typeof activity === "string" ? defaultActivitySkins[activity] : activity;
+  const { neighbors, mine, clue, openedOn, flaggedOn } = squares;
+  const moves: number[] = [];
+  const mistakeOn =
+    Math.random() < 0.7 ? 4 + Math.floor(Math.random() * 5) : Infinity;
+  let target = first;
+  while (true) {
+    const turn = moves.length;
+    moves.push(target);
+    if (mine[target]) {
+      if (turn >= mistakeOn) return { moves, won: false };
+      flaggedOn[target] = turn;
+    } else {
+      reveal(squares, target, turn);
+    }
+
+    const hidden = indices.filter(
+      (i) => openedOn[i] === Infinity && flaggedOn[i] === Infinity,
+    );
+    const safe = hidden.filter((i) => !mine[i]);
+    if (safe.length === 0) return { moves, won: true };
+    const frontier = hidden.filter((i) =>
+      neighbors[i]!.some((n) => openedOn[n] !== Infinity),
+    );
+    const mines = frontier.filter((i) => mine[i]);
+    if (moves.length >= mistakeOn) {
+      const remainingMines = hidden.filter((i) => mine[i]);
+      if (remainingMines.length) {
+        target = pick(mines.length ? mines : remainingMines);
+        continue;
+      }
+    }
+    // Flag a mine when a revealed clue accounts for all its unopened neighbors.
+    if (moves.length % 3 === 1) {
+      const provable = mines.filter((index) =>
+        neighbors[index]!.some((adjacent) => {
+          if (openedOn[adjacent] === Infinity) return false;
+          const unopened = neighbors[adjacent]!.filter(
+            (cell) => openedOn[cell] === Infinity,
+          );
+          return clue[adjacent] === unopened.length;
+        }),
+      );
+      if (provable.length) {
+        target = pick(provable);
+        continue;
+      }
+    }
+    const safeFrontier = frontier.filter((index) => !mine[index]);
+    target = pick(safeFrontier.length ? safeFrontier : safe);
+  }
+}
+
+export function createRound(
+  gridColumns: number,
+  gridRows: number,
+  clickedColumn: number,
+  clickedRow: number,
+  occupied: Bounds[] = [],
+  activity: BoardSkin | BoardSkin["kind"] = "minesweeper",
+) {
+  const skin =
+    typeof activity === "string" ? defaultActivitySkins[activity] : activity;
   const columns = Math.min(9, gridColumns);
   const rows = Math.min(7, gridRows);
-  const origin = findSpace(gridColumns, gridRows, {
-    left: clickedColumn - Math.floor(columns / 2), top: clickedRow - Math.floor(rows / 2), columns, rows,
-  }, occupied);
+  const origin = findSpace(
+    gridColumns,
+    gridRows,
+    {
+      left: clickedColumn - Math.floor(columns / 2),
+      top: clickedRow - Math.floor(rows / 2),
+      columns,
+      rows,
+    },
+    occupied,
+  );
   if (!origin) return null;
   const { left, top } = origin;
   const firstColumn = Math.max(0, Math.min(columns - 1, clickedColumn - left));
   const firstRow = Math.max(0, Math.min(rows - 1, clickedRow - top));
   const first = firstRow * columns + firstColumn;
   const squares = createSquares(columns, rows);
-  const { neighbors, mine, clue, openedOn, flaggedOn } = squares;
+  const { neighbors, mine, clue, openedOn } = squares;
   const indices = neighbors.map((_, index) => index);
   // Keep the opening click and its neighbors clear so the first reveal spreads.
-  const candidates = indices.filter(i => i !== first && !neighbors[i]!.includes(first));
-  const desiredMines = indices.length * 0.15;
-  const mineCount = Math.min(skin.kind === "delivery" ? Math.floor(desiredMines) : Math.ceil(desiredMines), candidates.length);
+  const candidates = indices.filter(
+    (i) => i !== first && !neighbors[i]!.includes(first),
+  );
+  const expectedMines = indices.length * 0.15;
+  const desiredMines =
+    skin.kind === "delivery"
+      ? Math.floor(expectedMines)
+      : Math.ceil(expectedMines);
+  const mineCount = Math.min(desiredMines, candidates.length);
   for (let i = 0; i < mineCount; i++) {
-    const index = candidates.splice(Math.floor(Math.random() * candidates.length), 1)[0]!;
+    const index = candidates.splice(
+      Math.floor(Math.random() * candidates.length),
+      1,
+    )[0]!;
     mine[index] = 1;
   }
-  for (const i of indices) clue[i] = neighbors[i]!.filter(n => mine[n]).length;
+  for (const i of indices)
+    clue[i] = neighbors[i]!.filter((n) => mine[n]).length;
 
   if (skin.kind === "delivery") {
     reveal(squares, first, 0);
@@ -137,50 +255,39 @@ export function createRound(
         if (!mine[index]) reveal(squares, index, turn);
       }
     });
-    return { activity: skin.kind, skin, columns, rows, left, top, squares, moves };
+    return {
+      activity: skin.kind,
+      skin,
+      columns,
+      rows,
+      left,
+      top,
+      squares,
+      moves,
+    };
   }
 
-  const moves: number[] = [];
-  const mistakeOn = Math.random() < 0.7 ? 4 + Math.floor(Math.random() * 5) : Infinity;
-  let target = first;
-  let won = false;
-  while (true) {
-    const turn = moves.length;
-    moves.push(target);
-    if (mine[target]) {
-      if (turn >= mistakeOn) break;
-      flaggedOn[target] = turn;
-    } else {
-      reveal(squares, target, turn);
-    }
-
-    const hidden = indices.filter(i => openedOn[i] === Infinity && flaggedOn[i] === Infinity);
-    const safe = hidden.filter(i => !mine[i]);
-    if (safe.length === 0) {
-      won = true;
-      break;
-    }
-    const frontier = hidden.filter(i => neighbors[i]!.some(n => openedOn[n] !== Infinity));
-    const mines = frontier.filter(i => mine[i]);
-    if (moves.length >= mistakeOn) {
-      const remainingMines = hidden.filter(i => mine[i]);
-      if (remainingMines.length) {
-        target = pick(mines.length ? mines : remainingMines);
-        continue;
-      }
-    }
-    // Flag a mine when a revealed clue accounts for all its unopened neighbors.
-    const provable = mines.filter(i => neighbors[i]!.some(n =>
-      openedOn[n] !== Infinity && clue[n] === neighbors[n]!.filter(k => openedOn[k] === Infinity).length));
-    const nextSafe = frontier.filter(i => !mine[i]);
-    target = pick(provable.length && moves.length % 3 === 1 ? provable : nextSafe.length ? nextSafe : safe);
-  }
-  return { activity: skin.kind, skin, squares, moves, won, columns, rows, left, top };
+  const { moves, won } = playMinesweeper(squares, indices, first);
+  return {
+    activity: skin.kind,
+    skin,
+    squares,
+    moves,
+    won,
+    columns,
+    rows,
+    left,
+    top,
+  };
 }
 
 export type Round = NonNullable<ReturnType<typeof createRound>>;
 
-export function roundFrame(round: Round, elapsed: number, reducedMotion: boolean) {
+export function roundFrame(
+  round: Round,
+  elapsed: number,
+  reducedMotion: boolean,
+) {
   const time = Math.max(0, elapsed) / turnMs;
   const last = round.moves.length - 1;
   const ending = (time - last - tapPhase) * turnMs;
@@ -194,10 +301,15 @@ export function roundFrame(round: Round, elapsed: number, reducedMotion: boolean
   const row = (i: number) => Math.floor(i / round.columns);
   const progress = reducedMotion ? 1 : Math.min(1, (time - turn) / tapPhase);
   const eased = progress * progress * (3 - 2 * progress);
-  const hand = ending < 0 ? {
-    column: round.left + col(previous) + (col(target) - col(previous)) * eased,
-    row: round.top + row(previous) + (row(target) - row(previous)) * eased,
-  } : null;
+  const hand =
+    ending < 0
+      ? {
+          column:
+            round.left + col(previous) + (col(target) - col(previous)) * eased,
+          row:
+            round.top + row(previous) + (row(target) - row(previous)) * eased,
+        }
+      : null;
 
   function glyphAt(column: number, gridRow: number) {
     const x = column - round.left;
@@ -207,7 +319,8 @@ export function roundFrame(round: Round, elapsed: number, reducedMotion: boolean
     const { openedOn, flaggedOn, mine, clue } = round.squares;
     if (round.activity === "delivery") {
       const visit = round.moves.indexOf(index);
-      if (visit >= 0) return visit <= played ? round.skin.delivered : round.skin.stop;
+      if (visit >= 0)
+        return visit <= played ? round.skin.delivered : round.skin.stop;
       if (openedOn[index]! <= Math.max(0, played)) return round.skin.ground;
       return;
     }
@@ -215,13 +328,16 @@ export function roundFrame(round: Round, elapsed: number, reducedMotion: boolean
       const distance = Math.hypot(x - col(target), y - row(target));
       const wave = ending - (reducedMotion ? 0 : distance * 85);
       if (wave >= 0) {
-        if (index === target) return round.won ? round.skin.win : round.skin.loss;
-        if (!reducedMotion && wave < 300) return round.won ? round.skin.celebration : round.skin.loss;
+        if (index === target)
+          return round.won ? round.skin.win : round.skin.loss;
+        if (!reducedMotion && wave < 300)
+          return round.won ? round.skin.celebration : round.skin.loss;
         if (mine[index]) return round.won ? round.skin.flag : round.skin.mine;
       }
     }
     if (flaggedOn[index]! <= played) return round.skin.flag;
-    if (openedOn[index]! <= played) return round.skin.clues[clue[index]!];
+    if (openedOn[index]! <= Math.max(0, played))
+      return round.skin.clues[clue[index]!];
     // An unopened square keeps its live grid emoji.
   }
   return { hand, glyphAt };

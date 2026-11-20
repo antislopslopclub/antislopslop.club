@@ -20,7 +20,11 @@ canvas {
   position: fixed;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
-  font: 500 clamp(16px, 2.2vw, 26px) / 1.4 ui-monospace, Menlo, Consolas, monospace;
+  font:
+    500 clamp(16px, 2.2vw, 26px) / 1.4 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
   letter-spacing: 0.025em;
   white-space: nowrap;
   pointer-events: none;

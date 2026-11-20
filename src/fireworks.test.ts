@@ -17,13 +17,20 @@ test("a New Year firework bursts outward on all sides of the click", () => {
   firework(size, size, 600, false, draw);
 
   // Assert
-  const quadrants = new Set(draw.mock.calls.map(([, x, y]) => [x > center, y > center].join(",")));
+  const quadrants = new Set(
+    draw.mock.calls.map(([, x, y]) => [x > center, y > center].join(",")),
+  );
   expect(quadrants.size).toBe(4);
 });
 
 test("reduced motion shows the burst at the selected position", () => {
   // Arrange
-  const firework = newYearTheme.activity.create(0.25, 0.75, 0, newYearTheme.pointer);
+  const firework = newYearTheme.activity.create(
+    0.25,
+    0.75,
+    0,
+    newYearTheme.pointer,
+  );
   const draw = mock<DrawSprite>(() => {});
 
   // Act

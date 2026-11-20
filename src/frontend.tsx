@@ -7,4 +7,8 @@ const root = import.meta.hot
   ? ((import.meta.hot.data as { root?: Root }).root ??= createRoot(element))
   : createRoot(element);
 
-root.render(<StrictMode><App /></StrictMode>);
+root.render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
