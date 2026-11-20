@@ -1,30 +1,60 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRound, findSpace, roundFrame, type Round } from "./minesweeper";
-import { createFinale, type Icon } from "./finale";
-import { emojis } from "./emojis";
+import { drawEffects, type ClickEffect } from "./click-effects";
+import { createFinale } from "./finale";
+import { Icons } from "./icons";
+import { themeFor, type Theme } from "./emojis";
 import "./index.css";
 
 const cellSize = 24;
 const attractionRadius = 140;
-const winkIndex = emojis.length;
 
-type Cell = { emojiIndex: number; nextChange: number; offsetX: number; offsetY: number };
+function gridCells(count: number) {
+  return {
+    emojiIndex: new Uint32Array(count), nextChange: new Float64Array(count),
+    offsetX: new Float64Array(count), offsetY: new Float64Array(count),
+  };
+}
 
 function randomDelay() {
   return 1000 + Math.random() * 4000;
 }
 
 export function App() {
+  const [theme, setTheme] = useState(() => themeFor(window.location.pathname, new Date()));
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      const now = new Date();
+      setTheme(themeFor(window.location.pathname, now));
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      timer = setTimeout(refresh, midnight.getTime() - now.getTime());
+    };
+    refresh();
+    return () => clearTimeout(timer);
+  }, []);
+
+  return <Scene key={theme.slug} theme={theme} />;
+}
+
+function Scene({ theme }: { theme: Theme }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const effectsRef = useRef<HTMLCanvasElement>(null);
 
   const messageRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
+    const emojis = theme.grid;
+    const refillIndex = emojis.length;
     const canvas = canvasRef.current!;
+    const message = messageRef.current!;
     const context = canvas.getContext("2d");
     if (!context) return;
+    const effects = effectsRef.current?.getContext("2d");
+    const layers = effects ? [context, effects] : [context];
 
-    const cells: Cell[] = [];
+    let cells = gridCells(0);
     let columns = 1;
     let rows = 1;
     let cellWidth = cellSize;
@@ -33,21 +63,25 @@ export function App() {
     let frame: number;
     let clicks = 0;
     let finale: ReturnType<typeof createFinale> | null = null;
-    let visibleHands: Icon[] = [];
+    const visibleActors = new Icons();
+    let activeEffects: ClickEffect[] = [];
 
     let lastFrame = performance.now();
     let pointer: { x: number; y: number } | null = null;
-    let games: { round: Round; start: number }[] = [];
+    let rounds: Round[] = [];
+    let starts: number[] = [];
+    const handColumns: number[] = [];
+    const handRows: number[] = [];
     const overlays = new Map<number, string>();
     const dirty = new Set<number>();
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-    const glyphAt = (index: number) => overlays.get(index) ?? emojis[cells[index]!.emojiIndex] ?? "😉";
+    const glyphAt = (index: number) => overlays.get(index) ?? emojis[cells.emojiIndex[index]!] ?? theme.refill;
 
-    const paintCell = (column: number, row: number, cell: Cell) => {
-      const x = (column + 0.5) * cellWidth + cell.offsetX;
-      const y = (row + 0.5) * cellHeight + cell.offsetY;
-      context.fillText(glyphAt(row * columns + column), x, y);
+    const paintCell = (index: number) => {
+      const x = (index % columns + 0.5) * cellWidth + cells.offsetX[index]!;
+      const y = (Math.floor(index / columns) + 0.5) * cellHeight + cells.offsetY[index]!;
+      context.fillText(glyphAt(index), x, y);
     };
 
     const resize = () => {
@@ -56,42 +90,57 @@ export function App() {
       if (!width || !height) return;
 
       const pixelRatio = window.devicePixelRatio;
-      canvas.width = Math.round(width * pixelRatio);
-      canvas.height = Math.round(height * pixelRatio);
-      context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-      context.font = '16px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-      context.textAlign = "center";
-      context.textBaseline = "middle";
+      for (const layer of layers) {
+        layer.canvas.width = Math.round(width * pixelRatio);
+        layer.canvas.height = Math.round(height * pixelRatio);
+        layer.setTransform(layer.canvas.width / width, 0, 0, layer.canvas.height / height, 0, 0);
+        layer.font = '16px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+        layer.textAlign = "center";
+        layer.textBaseline = "middle";
+      }
 
       columns = Math.max(1, Math.floor(width / cellSize));
       rows = Math.max(1, Math.floor(height / cellSize));
       cellWidth = width / columns;
       cellHeight = height / rows;
       grid = { columns, rows, cellWidth, cellHeight };
-      cells.length = rows * columns;
-      visibleHands = [];
+      const previousCount = cells.emojiIndex.length;
+      const count = rows * columns;
+      if (count !== previousCount) {
+        const next = gridCells(count);
+        next.emojiIndex.set(cells.emojiIndex.subarray(0, count));
+        next.nextChange.set(cells.nextChange.subarray(0, count));
+        next.offsetX.set(cells.offsetX.subarray(0, count));
+        next.offsetY.set(cells.offsetY.subarray(0, count));
+        cells = next;
+      }
+      visibleActors.clear();
       const now = performance.now();
       overlays.clear();
-      // Keep boards that still fit in place before relocating any clipped boards.
-      const retained = games.filter(({ round }) =>
-        round.left + round.columns <= columns && round.top + round.rows <= rows);
-      for (const game of games) {
-        if (retained.includes(game)) continue;
-        const position = findSpace(columns, rows, game.round, retained.map(g => g.round));
+      const retained: number[] = [];
+      const clipped: number[] = [];
+      rounds.forEach((round, i) => {
+        const fits = round.left + round.columns <= columns && round.top + round.rows <= rows;
+        (fits ? retained : clipped).push(i);
+      });
+      const occupied = retained.map(i => rounds[i]!);
+      for (const i of clipped) {
+        const round = rounds[i]!;
+        const position = findSpace(columns, rows, round, occupied);
         if (position) {
-          Object.assign(game.round, position);
-          retained.push(game);
+          Object.assign(round, position);
+          occupied.push(round);
+          retained.push(i);
         }
       }
-      games = retained;
-      for (let index = 0; index < cells.length; index++) {
-        const cell = cells[index] ??= {
-          emojiIndex: Math.floor(Math.random() * emojis.length),
-          nextChange: now + Math.random() * randomDelay(),
-          offsetX: 0,
-          offsetY: 0,
-        };
-        if (!finale) paintCell(index % columns, Math.floor(index / columns), cell);
+      rounds = occupied;
+      starts = retained.map(i => starts[i]!);
+      for (let index = previousCount; index < count; index++) {
+        cells.emojiIndex[index] = Math.floor(Math.random() * emojis.length);
+        cells.nextChange[index] = now + Math.random() * randomDelay();
+      }
+      if (!finale) {
+        for (let index = 0; index < count; index++) paintCell(index);
       }
     };
 
@@ -111,16 +160,15 @@ export function App() {
       const blend = 1 - Math.exp(-Math.max(0, now - lastFrame) / 95);
       lastFrame = now;
       if (finale) {
-        const phase = finale(grid, now, reducedMotion.matches, (index, wink, changesAt) => {
-          const cell = cells[index]!;
-          cell.emojiIndex = wink ? winkIndex : Math.floor(Math.random() * emojis.length);
-          cell.nextChange = wink ? changesAt : now + randomDelay();
+        const phase = finale(grid, now, reducedMotion.matches, (index, showRefillGlyph, changesAt) => {
+          cells.emojiIndex[index] = showRefillGlyph ? refillIndex : Math.floor(Math.random() * emojis.length);
+          cells.nextChange[index] = showRefillGlyph ? changesAt : now + randomDelay();
           const column = index % columns;
           const row = Math.floor(index / columns);
           context.clearRect(column * cellWidth, row * cellHeight, cellWidth, cellHeight);
-          paintCell(column, row, cell);
+          paintCell(index);
         });
-        messageRef.current!.hidden = phase !== "message";
+        message.hidden = phase !== "message";
         if (phase === "done") {
           finale = null;
           clicks = 0;
@@ -130,34 +178,43 @@ export function App() {
       }
       const target = reducedMotion.matches ? null : pointer;
       let left = columns, right = -1, top = rows, bottom = -1;
-      const hands: { column: number; row: number }[] = [];
+      handColumns.length = handRows.length = 0;
       overlays.clear();
-      games = games.filter(({ round, start }) => {
+      let active = 0;
+      for (let i = 0; i < rounds.length; i++) {
+        const round = rounds[i]!;
+        const start = starts[i]!;
         const lastColumn = round.left + round.columns - 1;
         const lastRow = round.top + round.rows - 1;
         // Clear the hand and ending glyphs even on the last frame of a round.
         invalidate(round.left - 1, round.top - 1, lastColumn + 1, lastRow + 1);
         const playback = roundFrame(round, now - start, reducedMotion.matches);
-        if (!playback) return false;
+        if (!playback) continue;
         for (let row = round.top; row <= lastRow; row++) {
           for (let column = round.left; column <= lastColumn; column++) {
             const glyph = playback.glyphAt(column, row);
             if (glyph) overlays.set(row * columns + column, glyph);
           }
         }
-        if (playback.hand) hands.push(playback.hand);
-        return true;
-      });
+        if (playback.hand) {
+          handColumns.push(playback.hand.column);
+          handRows.push(playback.hand.row);
+        }
+        rounds[active] = round;
+        starts[active] = start;
+        active++;
+      }
+      rounds.length = starts.length = active;
 
-      cells.forEach((cell, index) => {
-        const changed = now >= cell.nextChange;
+      for (let index = 0; index < cells.emojiIndex.length; index++) {
+        const changed = now >= cells.nextChange[index]!;
         if (changed) {
           const offset = 1 + Math.floor(Math.random() * (emojis.length - 1));
-          cell.emojiIndex = (cell.emojiIndex + offset) % emojis.length;
-          cell.nextChange = now + randomDelay();
+          cells.emojiIndex[index] = (cells.emojiIndex[index]! + offset) % emojis.length;
+          cells.nextChange[index] = now + randomDelay();
         }
-        const displaced = cell.offsetX !== 0 || cell.offsetY !== 0;
-        if (!target && !displaced && !changed) return;
+        const displaced = cells.offsetX[index]! !== 0 || cells.offsetY[index]! !== 0;
+        if (!target && !displaced && !changed) continue;
 
         const column = index % columns;
         const row = Math.floor(index / columns);
@@ -166,10 +223,10 @@ export function App() {
         const distanceSquared = dx * dx + dy * dy;
         if (displaced || (target && distanceSquared < attractionRadius ** 2)) {
           const pull = Math.max(0, 1 - Math.sqrt(distanceSquared) / attractionRadius) ** 2;
-          cell.offsetX += (dx * pull - cell.offsetX) * blend;
-          cell.offsetY += (dy * pull - cell.offsetY) * blend;
-          if (Math.abs(cell.offsetX) < 0.02) cell.offsetX = 0;
-          if (Math.abs(cell.offsetY) < 0.02) cell.offsetY = 0;
+          cells.offsetX[index]! += (dx * pull - cells.offsetX[index]!) * blend;
+          cells.offsetY[index]! += (dy * pull - cells.offsetY[index]!) * blend;
+          if (Math.abs(cells.offsetX[index]!) < 0.02) cells.offsetX[index] = 0;
+          if (Math.abs(cells.offsetY[index]!) < 0.02) cells.offsetY[index] = 0;
           left = Math.min(left, column);
           right = Math.max(right, column);
           top = Math.min(top, row);
@@ -177,21 +234,27 @@ export function App() {
         } else if (changed) {
           invalidate(column, row, column, row);
         }
-      });
+      }
 
       // Include one neighboring cell on each side to clear overhanging glyphs.
       if (right >= left) invalidate(left - 1, top - 1, right + 1, bottom + 1);
       for (const index of dirty) {
-        paintCell(index % columns, Math.floor(index / columns), cells[index]!);
+        paintCell(index);
       }
       dirty.clear();
-      visibleHands = [];
-      for (const { column, row } of hands) {
-        const cell = cells[Math.round(row) * columns + Math.round(column)]!;
-        const x = (column + 0.76) * cellWidth + cell.offsetX;
-        const y = (row + 0.89) * cellHeight + cell.offsetY;
-        visibleHands.push({ glyph: "👆", x, y });
-        context.fillText("👆", x, y);
+      visibleActors.clear();
+      for (let i = 0; i < handColumns.length; i++) {
+        const column = handColumns[i]!;
+        const row = handRows[i]!;
+        const index = Math.round(row) * columns + Math.round(column);
+        const x = (column + 0.76) * cellWidth + cells.offsetX[index]!;
+        const y = (row + 0.89) * cellHeight + cells.offsetY[index]!;
+        visibleActors.add(theme.pointer, x, y);
+        context.fillText(theme.pointer, x, y);
+      }
+      if (effects && activeEffects.length) {
+        activeEffects = drawEffects(effects, activeEffects, columns * cellWidth, rows * cellHeight,
+          now, reducedMotion.matches, visibleActors);
       }
       frame = requestAnimationFrame(animate);
     };
@@ -208,28 +271,38 @@ export function App() {
     const listeners = new AbortController();
     const options = { signal: listeners.signal };
     const activate = (anchorX: number, anchorY: number) => {
-      if (finale || !cells.length) return;
+      if (finale || !cells.emojiIndex.length) return;
       if (++clicks === 7) {
-        const icons = cells.map((cell, index) => ({
-          glyph: glyphAt(index),
-          x: (index % columns + 0.5) * cellWidth + cell.offsetX,
-          y: (Math.floor(index / columns) + 0.5) * cellHeight + cell.offsetY,
-        }));
-        finale = createFinale(context, icons.concat(visibleHands), grid, anchorX, performance.now());
-        games = [];
-        visibleHands = [];
+        const icons = new Icons();
+        for (let i = 0; i < cells.emojiIndex.length; i++) {
+          icons.add(glyphAt(i), (i % columns + 0.5) * cellWidth + cells.offsetX[i]!,
+            (Math.floor(i / columns) + 0.5) * cellHeight + cells.offsetY[i]!);
+        }
+        for (let i = 0; i < visibleActors.glyph.length; i++) {
+          icons.add(visibleActors.glyph[i]!, visibleActors.x[i]!, visibleActors.y[i]!);
+        }
+        finale = createFinale(context, icons, grid, anchorX, performance.now());
+        activeEffects = [];
+        rounds.length = starts.length = 0;
+        effects?.clearRect(0, 0, columns * cellWidth, rows * cellHeight);
+        visibleActors.clear();
         overlays.clear();
         pointer = null;
-        for (const cell of cells) {
-          cell.offsetX = 0;
-          cell.offsetY = 0;
-        }
+        cells.offsetX.fill(0);
+        cells.offsetY.fill(0);
+        return;
+      }
+      if (theme.activity.kind === "effect") {
+        activeEffects.push(theme.activity.create(anchorX, anchorY, performance.now(), theme.pointer));
         return;
       }
       const column = Math.max(0, Math.min(columns - 1, Math.floor(anchorX * columns)));
       const row = Math.max(0, Math.min(rows - 1, Math.floor(anchorY * rows)));
-      const round = createRound(columns, rows, column, row, games.map(game => game.round));
-      if (round) games.push({ round, start: performance.now() });
+      const round = createRound(columns, rows, column, row, rounds, theme.activity);
+      if (round) {
+        rounds.push(round);
+        starts.push(performance.now());
+      }
     };
     canvas.addEventListener("click", event => {
       const bounds = canvas.getBoundingClientRect();
@@ -258,13 +331,15 @@ export function App() {
       cancelAnimationFrame(frame);
       observer.disconnect();
       listeners.abort();
+      message.hidden = true;
     };
-  }, []);
+  }, [theme]);
 
   return (
     <main>
-      <canvas ref={canvasRef} role="button" tabIndex={0} aria-label="click for minesweeper" />
-      <span ref={messageRef} className="finale-message" role="status" hidden>See you soon!</span>
+      <canvas ref={canvasRef} role="button" tabIndex={0} aria-label={theme.label} />
+      {theme.activity.kind === "effect" && <canvas ref={effectsRef} className="click-effects" aria-hidden="true" />}
+      <span ref={messageRef} className="finale-message" role="status" hidden>{theme.finaleMessage}</span>
     </main>
   );
 }
